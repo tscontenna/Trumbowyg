@@ -1,0 +1,186 @@
+<html>
+<head>
+  <title>Trumbowyg v3 - Content Editable</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      color: #eee;
+      background: #111;
+      font-size: 16px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    [contenteditable] {
+      height: 75%;
+      padding: 25px;
+      font-family: Helvetica, Arial, sans-serif;
+      background: #222;
+      border-bottom: 3px solid #555;
+      overflow: auto;
+    }
+
+    #result {
+      padding: 25px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div contenteditable="true">
+    <p>Lorem <del>ipsum <strong>d<em>o</em>lor</strong></del> <em>sit</em> amet.</p>
+    <p>And <strong>blah <em>or</em></strong> nah.</p>
+    <img src="img.svg" alt="Some JavaScript logo" width="20px">
+    <ul>
+      <li>Item 1</li>
+      <li>Second item</li>
+      <li>List in list
+        <ul>
+          <li>Third li</li>
+          <li>Fourth Item</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+  <div id="result"></div>
+
+  <script>
+    const contenteditable = document.querySelector('[contenteditable]')
+    const showContentEditableHtml = () => {
+      document.getElementById('result').innerHTML = contenteditable.innerHTML.replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;")
+    }
+    contenteditable.addEventListener('input', showContentEditableHtml)
+    showContentEditableHtml()
+
+    function getTextNodes(el) {
+      if (el.nodeType === 3) {
+        return [el]
+      }
+
+      return Array.from(el.childNodes).reduce(function (acc, childNode) {
+        if (childNode.nodeType !== 3) {
+          return acc.concat(getTextNodes(childNode))
+        }
+
+        acc.push(childNode)
+        return acc
+      }, [])
+    }
+
+    function cleanTextNode(textNode) {
+      return textNode.textContent.replace(/(^ {2,})|( {2,}$)/g, '')
+    }
+
+    function getNodeOffset(rootEl, el, offset) {
+      if (el === rootEl) {
+        return offset
+      }
+
+      const childNodes = Array.from(el.parentNode.childNodes)
+      const previousNodes = childNodes.slice(0, childNodes.indexOf(el))
+      const previousNodesText = previousNodes.reduce((acc, node) => acc.concat(getTextNodes(node)), []).map(cleanTextNode)
+
+      offset = offset + previousNodesText.reduce((acc, nodeText) => acc + nodeText.length, 0)
+
+      return getNodeOffset(rootEl, el.parentNode, offset)
+    }
+
+    function convertRangeToAbsoluteIndexes(rootEl, range) {
+      const start = getNodeOffset(rootEl, range.startContainer, range.startOffset)
+      const end = getNodeOffset(rootEl, range.endContainer, range.endOffset)
+
+      return [start, end]
+    }
+
+
+    let redrawTimeout = null
+    let lastRange = null
+    document.addEventListener('selectionchange', () => {
+      const selection = document.getSelection()
+
+      if (selection.type === 'Range') {
+        const range = selection.getRangeAt(0)
+        if (lastRange !== range && !range.collapsed) {
+          const [absRangeStart, absRangeEnd] = convertRangeToAbsoluteIndexes(contenteditable, range)
+          console.log('Absolute Range', absRangeStart, absRangeEnd)
+
+          let textNodes = getTextNodes(contenteditable)
+          let cleanedTextNodesContent = textNodes.map(function (textNode) { return cleanTextNode(textNode) })
+          console.log('Selected text:', cleanedTextNodesContent.join('').substr(absRangeStart, absRangeEnd - absRangeStart))
+
+          lastRange = range
+        }
+      }
+    })
+
+
+    function getNodeForIndex(rootEl, absoluteIndex) {
+      let node = null
+      let index = absoluteIndex
+
+      childNodes = Array.from(rootEl.childNodes)
+
+      let childNode = null
+      while (!node && childNodes.length > 0) {
+        childNode = childNodes.shift()
+        if (childNode.nodeType === 3) {
+          let cleanedTextNodeLength = cleanTextNode(childNode).length
+          index -= cleanedTextNodeLength
+
+          if (index <= 0) {
+            node = childNode
+            index += cleanedTextNodeLength
+          }
+        } else {
+          let nodeText = childNode.innerText
+
+          // Find only if index is in text range
+          if (index - nodeText.length <= 0) {
+            [node, index] = getNodeForIndex(childNode, index)
+          } else {
+            index -= nodeText.length
+          }
+        }
+      }
+
+      return [node, index]
+    }
+
+    function setSelection(absStartIndex, absEndIndex) {
+      let [startNode, startIndex] = getNodeForIndex(contenteditable, absStartIndex)
+
+      if (!absEndIndex) {
+        document.getSelection().removeAllRanges()
+        document.getSelection().setPosition(startNode, startIndex)
+        return
+      }
+
+      let [endNode, endIndex] = getNodeForIndex(contenteditable, absEndIndex)
+
+      let range = document.createRange()
+      range.setStart(startNode, startIndex)
+      range.setEnd(endNode, endIndex)
+      document.getSelection().removeAllRanges()
+      document.getSelection().addRange(range)
+    }
+
+    // RESET
+    const oldHtml = contenteditable.innerHTML
+    contenteditable.innerHTML = ''
+    contenteditable.innerHTML = oldHtml
+
+    // SET SELECTION 5, 16 (m ipsum dol)
+    setSelection(5, 16)
+  </script>
+</body>
+</html>
